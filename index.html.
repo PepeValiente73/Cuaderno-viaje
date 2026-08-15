@@ -1,1 +1,392 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cuaderno de viaje</title>
 
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f5f1e8;
+      color: #333;
+    }
+
+    header {
+      background: #3f6b5b;
+      color: white;
+      padding: 25px 20px;
+      text-align: center;
+    }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+    }
+
+    header p {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    main {
+      max-width: 900px;
+      margin: 25px auto;
+      padding: 0 15px;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 25px;
+    }
+
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 11px 18px;
+      font-size: 16px;
+      cursor: pointer;
+      background: #3f6b5b;
+      color: white;
+    }
+
+    button:hover {
+      opacity: 0.9;
+    }
+
+    .day {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 25px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .day h2 {
+      margin-top: 0;
+      color: #3f6b5b;
+    }
+
+    .day input[type="text"],
+    .day textarea {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 7px;
+      font-family: inherit;
+      font-size: 15px;
+      margin-bottom: 12px;
+    }
+
+    .day textarea {
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .photos {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .photo-box {
+      border: 2px dashed #bbb;
+      border-radius: 8px;
+      min-height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      overflow: hidden;
+      background: #fafafa;
+      position: relative;
+    }
+
+    .photo-box img {
+      width: 100%;
+      height: 180px;
+      object-fit: cover;
+    }
+
+    .photo-box label {
+      padding: 15px;
+      cursor: pointer;
+      color: #666;
+    }
+
+    .photo-box input {
+      display: none;
+    }
+
+    .cover {
+      border: 3px solid #d69b28;
+    }
+
+    .cover-label {
+      display: block;
+      margin-top: 8px;
+      font-size: 13px;
+      color: #777;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 35px 20px;
+      color: #777;
+    }
+
+    .delete-day {
+      background: #a64b4b;
+      font-size: 14px;
+      margin-top: 15px;
+    }
+
+    footer {
+      text-align: center;
+      padding: 30px;
+      color: #777;
+      font-size: 13px;
+    }
+
+    @media (max-width: 650px) {
+      .photos {
+        grid-template-columns: 1fr;
+      }
+
+      header h1 {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>📖 Cuaderno de viaje</h1>
+  <p>Nuestros recuerdos, juntos</p>
+</header>
+
+<main>
+
+  <div class="toolbar">
+    <button onclick="addDay()">➕ Añadir día</button>
+  </div>
+
+  <div id="days"></div>
+
+</main>
+
+<footer>
+  Cuaderno de viaje
+</footer>
+
+<script>
+
+let days = JSON.parse(localStorage.getItem("travelDays")) || [];
+
+function saveDays() {
+  localStorage.setItem("travelDays", JSON.stringify(days));
+}
+
+function addDay() {
+
+  const dayNumber = days.length + 1;
+
+  days.push({
+    number: dayNumber,
+    title: "",
+    text: "",
+    photos: [null, null, null],
+    cover: 0
+  });
+
+  saveDays();
+  render();
+}
+
+function deleteDay(index) {
+
+  if (!confirm("¿Seguro que quieres eliminar este día?")) {
+    return;
+  }
+
+  days.splice(index, 1);
+
+  days.forEach((day, i) => {
+    day.number = i + 1;
+  });
+
+  saveDays();
+  render();
+}
+
+function updateTitle(index, value) {
+
+  days[index].title = value;
+  saveDays();
+}
+
+function updateText(index, value) {
+
+  days[index].text = value;
+  saveDays();
+}
+
+function changePhoto(dayIndex, photoIndex, input) {
+
+  const file = input.files[0];
+
+  if (!file) {
+    return;
+  }
+
+  const reader = new FileReader();
+
+  reader.onload = function(e) {
+
+    days[dayIndex].photos[photoIndex] = e.target.result;
+
+    saveDays();
+    render();
+  };
+
+  reader.readAsDataURL(file);
+}
+
+function setCover(dayIndex, photoIndex) {
+
+  if (!days[dayIndex].photos[photoIndex]) {
+    return;
+  }
+
+  days[dayIndex].cover = photoIndex;
+
+  saveDays();
+  render();
+}
+
+function render() {
+
+  const container = document.getElementById("days");
+
+  container.innerHTML = "";
+
+  if (days.length === 0) {
+
+    container.innerHTML = `
+      <div class="empty">
+        <h2>Tu cuaderno está vacío</h2>
+        <p>Pulsa "Añadir día" para empezar vuestro viaje.</p>
+      </div>
+    `;
+
+    return;
+  }
+
+  days.forEach((day, dayIndex) => {
+
+    const article = document.createElement("article");
+
+    article.className = "day";
+
+    let photosHTML = "";
+
+    for (let i = 0; i < 3; i++) {
+
+      if (day.photos[i]) {
+
+        photosHTML += `
+          <div>
+            <div class="photo-box ${day.cover === i ? "cover" : ""}">
+              <img src="${day.photos[i]}" alt="Foto del día ${day.number}">
+            </div>
+
+            <label class="cover-label">
+              <input
+                type="radio"
+                name="cover-${dayIndex}"
+                ${day.cover === i ? "checked" : ""}
+                onchange="setCover(${dayIndex}, ${i})"
+              >
+              ⭐ Foto de portada
+            </label>
+          </div>
+        `;
+
+      } else {
+
+        photosHTML += `
+          <div>
+            <div class="photo-box">
+              <label>
+                📷<br>
+                Añadir foto
+                <input
+                  type="file"
+                  accept="image/*"
+                  onchange="changePhoto(${dayIndex}, ${i}, this)"
+                >
+              </label>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    article.innerHTML = `
+
+      <h2>Día ${day.number}</h2>
+
+      <input
+        type="text"
+        placeholder="Título del día..."
+        value="${escapeHTML(day.title)}"
+        onchange="updateTitle(${dayIndex}, this.value)"
+      >
+
+      <textarea
+        placeholder="Escribe aquí lo que hemos hecho, lo que hemos visto, alguna anécdota..."
+        onchange="updateText(${dayIndex}, this.value)"
+      >${escapeHTML(day.text)}</textarea>
+
+      <h3>📸 Fotos</h3>
+
+      <div class="photos">
+        ${photosHTML}
+      </div>
+
+      <button
+        class="delete-day"
+        onclick="deleteDay(${dayIndex})"
+      >
+        🗑️ Eliminar día
+      </button>
+    `;
+
+    container.appendChild(article);
+  });
+}
+
+function escapeHTML(text) {
+
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+render();
+
+</script>
+
+</body>
+</html>
