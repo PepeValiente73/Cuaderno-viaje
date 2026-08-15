@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
+<script src="https://accounts.google.com/gsi/client"></script>
+  <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cuaderno de viaje</title>
@@ -173,7 +174,11 @@
   <h1>📖 Cuaderno de viaje</h1>
   <p>Nuestros recuerdos, juntos</p>
 </header>
-
+<div style="text-align:center; margin:20px;">
+  <button onclick="loginGoogle()">
+    🔐 Conectar con Google Drive
+  </button>
+</div>
 <main>
 
   <div class="toolbar">
@@ -385,7 +390,29 @@ function escapeHTML(text) {
 }
 
 render();
+const CLIENT_ID = "1065800137306-3q8oj4n83i9k1nof8neg56q97ic5642i.apps.googleusercontent.com";
 
+const SCOPES = "https://www.googleapis.com/auth/drive";
+
+function loginGoogle() {
+
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: (response) => {
+
+      if (response.error) {
+        console.error(response);
+        alert("No se ha podido conectar con Google Drive.");
+        return;
+      }
+
+      alert("¡Google Drive conectado correctamente!");
+    }
+  });
+
+  client.requestAccessToken();
+}
 </script>
 
 </body>
