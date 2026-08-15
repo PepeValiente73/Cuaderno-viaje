@@ -1,12 +1,18 @@
 <!DOCTYPE html>
 <html lang="es">
-<script src="https://accounts.google.com/gsi/client"></script>
-  <head>
+
+<head>
+
   <meta charset="UTF-8">
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
   <title>Cuaderno de viaje</title>
 
+  <script src="https://accounts.google.com/gsi/client"></script>
+
   <style>
+
     * {
       box-sizing: border-box;
     }
@@ -33,6 +39,17 @@
     header p {
       margin: 0;
       font-size: 16px;
+    }
+
+    .google-area {
+      text-align: center;
+      margin: 20px;
+    }
+
+    .google-status {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #666;
     }
 
     main {
@@ -157,6 +174,7 @@
     }
 
     @media (max-width: 650px) {
+
       .photos {
         grid-template-columns: 1fr;
       }
@@ -164,25 +182,43 @@
       header h1 {
         font-size: 26px;
       }
+
     }
+
   </style>
+
 </head>
 
 <body>
 
 <header>
+
   <h1>📖 Cuaderno de viaje</h1>
+
   <p>Nuestros recuerdos, juntos</p>
+
 </header>
-<div style="text-align:center; margin:20px;">
+
+<div class="google-area">
+
   <button onclick="loginGoogle()">
     🔐 Conectar con Google Drive
   </button>
+
+  <div id="googleStatus" class="google-status">
+    Google Drive no conectado
+  </div>
+
 </div>
+
 <main>
 
   <div class="toolbar">
-    <button onclick="addDay()">➕ Añadir día</button>
+
+    <button onclick="addDay()">
+      ➕ Añadir día
+    </button>
+
   </div>
 
   <div id="days"></div>
@@ -190,230 +226,675 @@
 </main>
 
 <footer>
+
   Cuaderno de viaje
+
 </footer>
 
 <script>
 
-let days = JSON.parse(localStorage.getItem("travelDays")) || [];
+  /*
+   * CONFIGURACIÓN DE GOOGLE
+   */
 
-function saveDays() {
-  localStorage.setItem("travelDays", JSON.stringify(days));
-}
+  const CLIENT_ID =
+    "1065800137306-3q8oj4n83i9k1nof8neg56q97ic5642i.apps.googleusercontent.com";
 
-function addDay() {
+  const SCOPES =
+    "https://www.googleapis.com/auth/drive.file";
 
-  const dayNumber = days.length + 1;
+  let accessToken = null;
 
-  days.push({
-    number: dayNumber,
-    title: "",
-    text: "",
-    photos: [null, null, null],
-    cover: 0
-  });
+  let driveFolderId =
+    localStorage.getItem("driveFolderId") || null;
 
-  saveDays();
-  render();
-}
 
-function deleteDay(index) {
+  /*
+   * DATOS DEL CUADERNO
+   */
 
-  if (!confirm("¿Seguro que quieres eliminar este día?")) {
-    return;
+  let days =
+    JSON.parse(localStorage.getItem("travelDays")) || [];
+
+
+  /*
+   * GUARDAR DATOS LOCALES
+   */
+
+  function saveDays() {
+
+    localStorage.setItem(
+      "travelDays",
+      JSON.stringify(days)
+    );
+
   }
 
-  days.splice(index, 1);
 
-  days.forEach((day, i) => {
-    day.number = i + 1;
-  });
+  /*
+   * CONECTAR CON GOOGLE
+   */
 
-  saveDays();
-  render();
-}
+  function loginGoogle() {
 
-function updateTitle(index, value) {
+    const client =
+      google.accounts.oauth2.initTokenClient({
 
-  days[index].title = value;
-  saveDays();
-}
+        client_id: CLIENT_ID,
 
-function updateText(index, value) {
+        scope: SCOPES,
 
-  days[index].text = value;
-  saveDays();
-}
+        callback: async (response) => {
 
-function changePhoto(dayIndex, photoIndex, input) {
+          if (response.error) {
 
-  const file = input.files[0];
+            console.error(response);
 
-  if (!file) {
-    return;
+            alert(
+              "No se ha podido conectar con Google Drive."
+            );
+
+            return;
+          }
+
+          accessToken =
+            response.access_token;
+
+          document.getElementById(
+            "googleStatus"
+          ).textContent =
+            "Google Drive conectado";
+
+          await createDriveFolder();
+
+        }
+
+      });
+
+    client.requestAccessToken();
+
   }
 
-  const reader = new FileReader();
 
-  reader.onload = function(e) {
+  /*
+   * CREAR CARPETA PRINCIPAL EN DRIVE
+   */
 
-    days[dayIndex].photos[photoIndex] = e.target.result;
+  async function createDriveFolder() {
+
+    try {
+
+      /*
+       * Si ya tenemos una carpeta guardada,
+       * no creamos otra.
+       */
+
+      if (driveFolderId) {
+
+        alert(
+          "Google Drive ya está conectado."
+        );
+
+        return;
+
+      }
+
+
+      const response = await fetch(
+
+        "https://www.googleapis.com/drive/v3/files",
+
+        {
+
+          method: "POST",
+
+          headers: {
+
+            "Authorization":
+              "Bearer " + accessToken,
+
+            "Content-Type":
+              "application/json"
+
+          },
+
+          body: JSON.stringify({
+
+            name: "Cuaderno de viaje",
+
+            mimeType:
+              "application/vnd.google-apps.folder"
+
+          })
+
+        }
+
+      );
+
+
+      const data =
+        await response.json();
+
+
+      console.log(
+        "Respuesta de Google Drive:",
+        data
+      );
+
+
+      if (data.id) {
+
+        driveFolderId =
+          data.id;
+
+        localStorage.setItem(
+          "driveFolderId",
+          driveFolderId
+        );
+
+        alert(
+          "¡Perfecto! Se ha creado la carpeta 'Cuaderno de viaje' en Google Drive."
+        );
+
+      }
+
+      else {
+
+        console.error(data);
+
+        alert(
+          "Google ha autorizado la aplicación, pero no se ha podido crear la carpeta."
+        );
+
+      }
+
+    }
+
+    catch (error) {
+
+      console.error(error);
+
+      alert(
+        "Ha ocurrido un error al crear la carpeta en Google Drive."
+      );
+
+    }
+
+  }
+
+
+  /*
+   * AÑADIR DÍA
+   */
+
+  function addDay() {
+
+    const dayNumber =
+      days.length + 1;
+
+
+    days.push({
+
+      number: dayNumber,
+
+      title: "",
+
+      text: "",
+
+      photos: [
+        null,
+        null,
+        null
+      ],
+
+      cover: 0
+
+    });
+
 
     saveDays();
+
     render();
-  };
 
-  reader.readAsDataURL(file);
-}
-
-function setCover(dayIndex, photoIndex) {
-
-  if (!days[dayIndex].photos[photoIndex]) {
-    return;
   }
 
-  days[dayIndex].cover = photoIndex;
 
-  saveDays();
-  render();
-}
+  /*
+   * ELIMINAR DÍA
+   */
 
-function render() {
+  function deleteDay(index) {
 
-  const container = document.getElementById("days");
+    if (
+      !confirm(
+        "¿Seguro que quieres eliminar este día?"
+      )
+    ) {
 
-  container.innerHTML = "";
+      return;
 
-  if (days.length === 0) {
+    }
 
-    container.innerHTML = `
-      <div class="empty">
-        <h2>Tu cuaderno está vacío</h2>
-        <p>Pulsa "Añadir día" para empezar vuestro viaje.</p>
-      </div>
-    `;
 
-    return;
+    days.splice(index, 1);
+
+
+    days.forEach(
+      (day, i) => {
+
+        day.number =
+          i + 1;
+
+      }
+    );
+
+
+    saveDays();
+
+    render();
+
   }
 
-  days.forEach((day, dayIndex) => {
 
-    const article = document.createElement("article");
+  /*
+   * CAMBIAR TÍTULO
+   */
 
-    article.className = "day";
+  function updateTitle(
+    index,
+    value
+  ) {
 
-    let photosHTML = "";
+    days[index].title =
+      value;
 
-    for (let i = 0; i < 3; i++) {
+    saveDays();
 
-      if (day.photos[i]) {
+  }
 
-        photosHTML += `
-          <div>
-            <div class="photo-box ${day.cover === i ? "cover" : ""}">
-              <img src="${day.photos[i]}" alt="Foto del día ${day.number}">
-            </div>
 
-            <label class="cover-label">
-              <input
-                type="radio"
-                name="cover-${dayIndex}"
-                ${day.cover === i ? "checked" : ""}
-                onchange="setCover(${dayIndex}, ${i})"
-              >
-              ⭐ Foto de portada
-            </label>
-          </div>
-        `;
+  /*
+   * CAMBIAR TEXTO
+   */
 
-      } else {
+  function updateText(
+    index,
+    value
+  ) {
 
-        photosHTML += `
-          <div>
-            <div class="photo-box">
-              <label>
-                📷<br>
-                Añadir foto
-                <input
-                  type="file"
-                  accept="image/*"
-                  onchange="changePhoto(${dayIndex}, ${i}, this)"
+    days[index].text =
+      value;
+
+    saveDays();
+
+  }
+
+
+  /*
+   * CARGAR FOTO
+   *
+   * De momento sigue guardándose
+   * localmente.
+   *
+   * En el siguiente paso la
+   * enviaremos a Google Drive.
+   */
+
+  function changePhoto(
+    dayIndex,
+    photoIndex,
+    input
+  ) {
+
+    const file =
+      input.files[0];
+
+
+    if (!file) {
+
+      return;
+
+    }
+
+
+    const reader =
+      new FileReader();
+
+
+    reader.onload =
+      function(e) {
+
+        days[
+          dayIndex
+        ].photos[
+          photoIndex
+        ] =
+          e.target.result;
+
+
+        saveDays();
+
+        render();
+
+      };
+
+
+    reader.readAsDataURL(file);
+
+  }
+
+
+  /*
+   * ELEGIR FOTO DE PORTADA
+   */
+
+  function setCover(
+    dayIndex,
+    photoIndex
+  ) {
+
+    if (
+      !days[
+        dayIndex
+      ].photos[
+        photoIndex
+      ]
+    ) {
+
+      return;
+
+    }
+
+
+    days[
+      dayIndex
+    ].cover =
+      photoIndex;
+
+
+    saveDays();
+
+    render();
+
+  }
+
+
+  /*
+   * DIBUJAR CUADERNO
+   */
+
+  function render() {
+
+    const container =
+      document.getElementById(
+        "days"
+      );
+
+
+    container.innerHTML =
+      "";
+
+
+    if (
+      days.length === 0
+    ) {
+
+      container.innerHTML = `
+
+        <div class="empty">
+
+          <h2>
+            Tu cuaderno está vacío
+          </h2>
+
+          <p>
+            Pulsa "Añadir día" para empezar vuestro viaje.
+          </p>
+
+        </div>
+
+      `;
+
+      return;
+
+    }
+
+
+    days.forEach(
+      (day, dayIndex) => {
+
+
+        const article =
+          document.createElement(
+            "article"
+          );
+
+
+        article.className =
+          "day";
+
+
+        let photosHTML =
+          "";
+
+
+        for (
+          let i = 0;
+          i < 3;
+          i++
+        ) {
+
+
+          if (
+            day.photos[i]
+          ) {
+
+
+            photosHTML += `
+
+              <div>
+
+                <div
+                  class="photo-box ${
+                    day.cover === i
+                      ? "cover"
+                      : ""
+                  }"
                 >
-              </label>
-            </div>
+
+                  <img
+                    src="${
+                      day.photos[i]
+                    }"
+                    alt="Foto del día ${
+                      day.number
+                    }"
+                  >
+
+                </div>
+
+                <label
+                  class="cover-label"
+                >
+
+                  <input
+                    type="radio"
+                    name="cover-${dayIndex}"
+                    ${
+                      day.cover === i
+                        ? "checked"
+                        : ""
+                    }
+                    onchange="setCover(
+                      ${dayIndex},
+                      ${i}
+                    )"
+                  >
+
+                  ⭐ Foto de portada
+
+                </label>
+
+              </div>
+
+            `;
+
+          }
+
+          else {
+
+
+            photosHTML += `
+
+              <div>
+
+                <div
+                  class="photo-box"
+                >
+
+                  <label>
+
+                    📷<br>
+
+                    Añadir foto
+
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onchange="changePhoto(
+                        ${dayIndex},
+                        ${i},
+                        this
+                      )"
+                    >
+
+                  </label>
+
+                </div>
+
+              </div>
+
+            `;
+
+          }
+
+        }
+
+
+        article.innerHTML = `
+
+          <h2>
+            Día ${day.number}
+          </h2>
+
+
+          <input
+            type="text"
+            placeholder="Título del día..."
+            value="${
+              escapeHTML(
+                day.title
+              )
+            }"
+            onchange="updateTitle(
+              ${dayIndex},
+              this.value
+            )"
+          >
+
+
+          <textarea
+            placeholder="Escribe aquí lo que hemos hecho, lo que hemos visto, alguna anécdota..."
+            onchange="updateText(
+              ${dayIndex},
+              this.value
+            )"
+          >${
+            escapeHTML(
+              day.text
+            )
+          }</textarea>
+
+
+          <h3>
+            📸 Fotos
+          </h3>
+
+
+          <div class="photos">
+
+            ${photosHTML}
+
           </div>
+
+
+          <button
+            class="delete-day"
+            onclick="deleteDay(
+              ${dayIndex}
+            )"
+          >
+
+            🗑️ Eliminar día
+
+          </button>
+
         `;
+
+
+        container.appendChild(
+          article
+        );
+
       }
-    }
+    );
 
-    article.innerHTML = `
+  }
 
-      <h2>Día ${day.number}</h2>
 
-      <input
-        type="text"
-        placeholder="Título del día..."
-        value="${escapeHTML(day.title)}"
-        onchange="updateTitle(${dayIndex}, this.value)"
-      >
+  /*
+   * SEGURIDAD PARA EL TEXTO
+   */
 
-      <textarea
-        placeholder="Escribe aquí lo que hemos hecho, lo que hemos visto, alguna anécdota..."
-        onchange="updateText(${dayIndex}, this.value)"
-      >${escapeHTML(day.text)}</textarea>
+  function escapeHTML(
+    text
+  ) {
 
-      <h3>📸 Fotos</h3>
+    return String(
+      text || ""
+    )
 
-      <div class="photos">
-        ${photosHTML}
-      </div>
+      .replace(
+        /&/g,
+        "&amp;"
+      )
 
-      <button
-        class="delete-day"
-        onclick="deleteDay(${dayIndex})"
-      >
-        🗑️ Eliminar día
-      </button>
-    `;
+      .replace(
+        /</g,
+        "&lt;"
+      )
 
-    container.appendChild(article);
-  });
-}
+      .replace(
+        />/g,
+        "&gt;"
+      )
 
-function escapeHTML(text) {
+      .replace(
+        /"/g,
+        "&quot;"
+      );
 
-  return String(text || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+  }
 
-render();
-const CLIENT_ID = "1065800137306-3q8oj4n83i9k1nof8neg56q97ic5642i.apps.googleusercontent.com";
 
-const SCOPES = "https://www.googleapis.com/auth/drive.file";
+  /*
+   * INICIAR APLICACIÓN
+   */
 
-function loginGoogle() {
+  render();
 
-  const client = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPES,
-    callback: (response) => {
-
-      if (response.error) {
-        console.error(response);
-        alert("No se ha podido conectar con Google Drive.");
-        return;
-      }
-
-      alert("¡Google Drive conectado correctamente!");
-    }
-  });
-
-  client.requestAccessToken();
-}
 </script>
 
 </body>
+
 </html>
