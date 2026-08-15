@@ -1363,6 +1363,42 @@
     <div id="pdfTripPrintArea" class="hidden"></div>
     <div id="pdfBudgetPrintArea" class="hidden"></div>
 
+    <!-- Firebase: CDN compat, sin npm ni compilación -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyBnU3Db3gCB9SiROP-pJ_mDLoeX1N0241Y",
+            authDomain: "cuaderno-de-viaje-e186e.firebaseapp.com",
+            projectId: "cuaderno-de-viaje-e186e",
+            storageBucket: "cuaderno-de-viaje-e186e.firebasestorage.app",
+            messagingSenderId: "505284785244",
+            appId: "1:505284785244:web:2d36eb87aac583c7c02299",
+            measurementId: "G-9THFV1XP1"
+        };
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        const cloudDB = firebase.firestore();
+        const cloudAuth = firebase.auth();
+        let cloudReady = false;
+        let cloudLoading = false;
+
+        async function initCloud() {
+            try {
+                // Mantiene la v19 funcionando incluso si Firebase falla.
+                // Si el proyecto está en modo de prueba, no necesitamos login.
+                cloudReady = true;
+                console.log('Firebase conectado:', firebase.app().options.projectId);
+                setTimeout(() => { const el=document.getElementById('cloudStatus'); if(el) el.textContent='☁️ Cuaderno compartido'; }, 0);
+            } catch (e) {
+                cloudReady = false;
+                setTimeout(() => { const el=document.getElementById('cloudStatus'); if(el) el.textContent='💾 Solo en este dispositivo'; }, 0);
+                console.warn('Firebase no disponible; se usará almacenamiento local.', e);
+            }
+        }
+        initCloud();
+    </script>
+
     <script>
         const cityCoordinates = {
             "Valencia": { lat: 39.4699, lon: -0.3763 },
@@ -1496,26 +1532,95 @@
             updateTripHeader();
             updateBudgetSummaryDisplays();
             checkAndFetchWeather();
+            setTimeout(() => subscribeToCloud(), 800);
         });
 
         async function loadAllData() {
-            const savedDays = localStorage.getItem('cantabria_trip_days');
-            const savedMeta = localStorage.getItem('cantabria_trip_meta');
+            let cloudLoaded = false;
 
-            if (savedDays) {
-                try { tripData = restoreCoverReferences(JSON.parse(savedDays)); } catch(e) { tripData = [...initialTripData]; }
-            } else {
-                tripData = JSON.parse(JSON.stringify(initialTripData));
+            // Primero intentamos leer el cuaderno compartido. Si aún no existe,
+            // usamos la v19 local exactamente como hasta ahora.
+            try {
+                if (cloudReady) {
+                    const snap = await cloudDB.collection('cuadernos').doc('cantabria').get();
+                    if (snap.exists && snap.data().days) {
+                        const data = snap.data();
+                        tripData = restoreCoverReferences(data.days || []);
+                        if (data.meta) tripMeta = { ...tripMeta, ...data.meta };
+                        cloudLoaded = true;
+                        // Dejamos también una copia local para poder seguir trabajando sin red.
+                        try {
+                            localStorage.setItem('cantabria_trip_days', JSON.stringify(getCompactTripData()));
+                            localStorage.setItem('cantabria_trip_meta', JSON.stringify(tripMeta));
+                        } catch (_) {}
+                    }
+                }
+            } catch (e) {
+                console.warn('No se pudo leer Firebase; se usa la copia local.', e);
             }
 
-            if (savedMeta) {
-                try { tripMeta = { ...tripMeta, ...JSON.parse(savedMeta) }; } catch(e) {}
-            }
+            if (!cloudLoaded) {
+                const savedDays = localStorage.getItem('cantabria_trip_days');
+                const savedMeta = localStorage.getItem('cantabria_trip_meta');
 
-            // Migración silenciosa: comprime también las fotos que ya estaban
-            // guardadas antes de esta versión. Esto evita que una foto antigua
-            // de varios MB bloquee el guardado de una nueva portada.
-            await migrateStoredImages();
+                if (savedDays) {
+                    try { tripData = restoreCoverReferences(JSON.parse(savedDays)); } catch(e) { tripData = [...initialTripData]; }
+                } else {
+                    tripData = JSON.parse(JSON.stringify(initialTripData));
+                }
+
+                if (savedMeta) {
+                    try { tripMeta = { ...tripMeta, ...JSON.parse(savedMeta) }; } catch(e) {}
+                }
+
+                await migrateStoredImages();
+
+                // Si Firebase está disponible, subimos la copia local para crear
+                // el cuaderno compartido sin obligar al usuario a introducir datos otra vez.
+                try { if (cloudReady) await syncToCloud(); } catch (e) { console.warn('No se pudo crear la copia cloud:', e); }
+            }
+        }
+
+        function getCloudTripData() {
+            // Firestore no necesita la portada duplicada. Las fotos siguen en local
+            // por ahora para no superar el límite de tamaño de un documento.
+            return tripData.map(day => {
+                const copy = { ...day };
+                copy.media = [];
+                copy.coverImage = null;
+                return copy;
+            });
+        }
+
+        async function syncToCloud() {
+            if (!cloudReady) return false;
+            try {
+                await cloudDB.collection('cuadernos').doc('cantabria').set({
+                    meta: tripMeta,
+                    days: getCloudTripData(),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                return true;
+            } catch (e) {
+                console.warn('No se pudo sincronizar con Firebase:', e);
+                return false;
+            }
+        }
+
+        function subscribeToCloud() {
+            if (!cloudReady || cloudLoading) return;
+            cloudDB.collection('cuadernos').doc('cantabria').onSnapshot((snap) => {
+                if (!snap.exists || !snap.data().days) return;
+                const data = snap.data();
+                // Evitamos pisar cambios locales mientras el usuario está editando.
+                if (window.__cloudWriteInProgress) return;
+                tripData = restoreCoverReferences(data.days || []);
+                if (data.meta) tripMeta = { ...tripMeta, ...data.meta };
+                renderDays();
+                updateTripHeader();
+                updateBudgetSummaryDisplays();
+                console.log('Cuaderno actualizado desde Firebase');
+            }, (e) => console.warn('Suscripción Firebase no disponible:', e));
         }
 
         function getCompactTripData() {
@@ -1599,6 +1704,10 @@
             try {
                 localStorage.setItem('cantabria_trip_days', compactJson);
                 localStorage.setItem('cantabria_trip_meta', metaJson);
+                if (cloudReady) {
+                    window.__cloudWriteInProgress = true;
+                    syncToCloud().finally(() => { window.__cloudWriteInProgress = false; });
+                }
                 return true;
             } catch (e) {
                 console.error('No se pudo guardar el cuaderno:', e);
@@ -1609,6 +1718,10 @@
                     localStorage.removeItem('cantabria_trip_meta');
                     localStorage.setItem('cantabria_trip_days', compactJson);
                     localStorage.setItem('cantabria_trip_meta', metaJson);
+                    if (cloudReady) {
+                        window.__cloudWriteInProgress = true;
+                        syncToCloud().finally(() => { window.__cloudWriteInProgress = false; });
+                    }
                     return true;
                 } catch (e2) {
                     // Restauramos lo anterior si el almacenamiento sigue lleno.
