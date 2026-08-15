@@ -1536,60 +1536,137 @@
         });
 
         async function loadAllData() {
-            let cloudLoaded = false;
+            // Primero recuperamos la copia local. Así, si Firebase contiene la
+            // estructura antigua sin fotos, no perdemos las fotos que ya existen.
+            const savedDays = localStorage.getItem('cantabria_trip_days');
+            const savedMeta = localStorage.getItem('cantabria_trip_meta');
 
-            // Primero intentamos leer el cuaderno compartido. Si aún no existe,
-            // usamos la v19 local exactamente como hasta ahora.
+            if (savedDays) {
+                try { tripData = restoreCoverReferences(JSON.parse(savedDays)); }
+                catch(e) { tripData = JSON.parse(JSON.stringify(initialTripData)); }
+            } else {
+                tripData = JSON.parse(JSON.stringify(initialTripData));
+            }
+            if (savedMeta) {
+                try { tripMeta = { ...tripMeta, ...JSON.parse(savedMeta) }; } catch(e) {}
+            }
+
+            await migrateStoredImages();
+
             try {
                 if (cloudReady) {
                     const snap = await cloudDB.collection('cuadernos').doc('cantabria').get();
                     if (snap.exists && snap.data().days) {
-                        const data = snap.data();
-                        tripData = restoreCoverReferences(data.days || []);
-                        if (data.meta) tripMeta = { ...tripMeta, ...data.meta };
-                        cloudLoaded = true;
-                        // Dejamos también una copia local para poder seguir trabajando sin red.
+                        await applyCloudSnapshot(snap);
+                        // Si había fotos locales y el cloud antiguo no las tenía,
+                        // la siguiente sincronización las subirá a la colección de fotos.
+                        await syncToCloud();
                         try {
                             localStorage.setItem('cantabria_trip_days', JSON.stringify(getCompactTripData()));
                             localStorage.setItem('cantabria_trip_meta', JSON.stringify(tripMeta));
                         } catch (_) {}
+                        return;
                     }
                 }
             } catch (e) {
-                console.warn('No se pudo leer Firebase; se usa la copia local.', e);
+                console.warn('No se pudo leer Firebase; se mantiene la copia local.', e);
             }
 
-            if (!cloudLoaded) {
-                const savedDays = localStorage.getItem('cantabria_trip_days');
-                const savedMeta = localStorage.getItem('cantabria_trip_meta');
-
-                if (savedDays) {
-                    try { tripData = restoreCoverReferences(JSON.parse(savedDays)); } catch(e) { tripData = [...initialTripData]; }
-                } else {
-                    tripData = JSON.parse(JSON.stringify(initialTripData));
-                }
-
-                if (savedMeta) {
-                    try { tripMeta = { ...tripMeta, ...JSON.parse(savedMeta) }; } catch(e) {}
-                }
-
-                await migrateStoredImages();
-
-                // Si Firebase está disponible, subimos la copia local para crear
-                // el cuaderno compartido sin obligar al usuario a introducir datos otra vez.
-                try { if (cloudReady) await syncToCloud(); } catch (e) { console.warn('No se pudo crear la copia cloud:', e); }
+            // Primera creación del cuaderno compartido.
+            try { if (cloudReady) await syncToCloud(); } catch (e) {
+                console.warn('No se pudo crear la copia cloud:', e);
             }
         }
 
         function getCloudTripData() {
-            // Firestore no necesita la portada duplicada. Las fotos siguen en local
-            // por ahora para no superar el límite de tamaño de un documento.
+            // Los textos y la estructura del cuaderno van en el documento principal.
+            // Las fotos se guardan aparte, una por documento, para no superar el
+            // límite de tamaño de un documento de Firestore.
             return tripData.map(day => {
                 const copy = { ...day };
-                copy.media = [];
+                const media = Array.isArray(day.media) ? day.media : [];
+                copy.mediaCount = media.length;
+                copy.coverIndex = day.coverImage
+                    ? media.findIndex(item => item && item.url === day.coverImage)
+                    : -1;
+                delete copy.media;
                 copy.coverImage = null;
                 return copy;
             });
+        }
+
+        async function syncCloudPhotos() {
+            if (!cloudReady) return;
+            const daysRef = cloudDB.collection('cuadernos').doc('cantabria').collection('dias');
+
+            for (let i = 0; i < tripData.length; i++) {
+                const day = tripData[i];
+                const dayRef = daysRef.doc(String(i));
+                const media = Array.isArray(day.media) ? day.media : [];
+                const coverIndex = day.coverImage
+                    ? media.findIndex(item => item && item.url === day.coverImage)
+                    : -1;
+
+                await dayRef.set({ mediaCount: media.length, coverIndex }, { merge: true });
+
+                const existing = await dayRef.collection('fotos').get();
+                const batch = cloudDB.batch();
+                const wanted = new Set();
+
+                media.forEach((item, idx) => {
+                    if (!item || !item.url) return;
+                    const photoId = String(idx);
+                    wanted.add(photoId);
+                    batch.set(dayRef.collection('fotos').doc(photoId), {
+                        url: item.url,
+                        index: idx
+                    }, { merge: true });
+                });
+
+                existing.forEach(doc => {
+                    if (!wanted.has(doc.id)) batch.delete(doc.ref);
+                });
+
+                await batch.commit();
+            }
+
+            // Si se han eliminado días, eliminamos sus documentos de fotos antiguos.
+            const existingDays = await daysRef.get();
+            if (existingDays.size > tripData.length) {
+                const batch = cloudDB.batch();
+                existingDays.forEach(doc => {
+                    const n = parseInt(doc.id, 10);
+                    if (Number.isInteger(n) && n >= tripData.length) batch.delete(doc.ref);
+                });
+                await batch.commit();
+            }
+        }
+
+        async function loadCloudPhotos(days) {
+            const result = days.map(day => ({
+                ...day,
+                media: [],
+                coverImage: null
+            }));
+            const daysRef = cloudDB.collection('cuadernos').doc('cantabria').collection('dias');
+
+            await Promise.all(result.map(async (day, i) => {
+                try {
+                    const daySnap = await daysRef.doc(String(i)).get();
+                    if (!daySnap.exists) return;
+                    const dayInfo = daySnap.data() || {};
+                    const photosSnap = await daysRef.doc(String(i)).collection('fotos').orderBy('index').get();
+                    day.media = photosSnap.docs.map(d => d.data()).filter(x => x && x.url);
+                    const coverIndex = Number.isInteger(dayInfo.coverIndex) ? dayInfo.coverIndex : -1;
+                    day.coverImage = coverIndex >= 0 && day.media[coverIndex]
+                        ? day.media[coverIndex].url
+                        : null;
+                } catch (e) {
+                    console.warn('No se pudieron cargar las fotos del día', i + 1, e);
+                }
+            }));
+
+            return result;
         }
 
         async function syncToCloud() {
@@ -1600,6 +1677,8 @@
                     days: getCloudTripData(),
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                 }, { merge: true });
+
+                await syncCloudPhotos();
                 return true;
             } catch (e) {
                 console.warn('No se pudo sincronizar con Firebase:', e);
@@ -1607,19 +1686,40 @@
             }
         }
 
+        async function applyCloudSnapshot(snap) {
+            if (!snap.exists || !snap.data().days) return;
+            const data = snap.data();
+            const cloudDays = data.days || [];
+            const cloudWithPhotos = await loadCloudPhotos(cloudDays);
+
+            // Si el documento cloud antiguo no tiene fotos pero este dispositivo sí,
+            // conservamos las fotos locales para poder migrarlas al nuevo formato.
+            const localDays = tripData || [];
+            cloudWithPhotos.forEach((day, i) => {
+                if ((!day.media || day.media.length === 0) && localDays[i] && Array.isArray(localDays[i].media)) {
+                    day.media = localDays[i].media;
+                    day.coverImage = localDays[i].coverImage || null;
+                }
+            });
+
+            tripData = restoreCoverReferences(cloudWithPhotos);
+            if (data.meta) tripMeta = { ...tripMeta, ...data.meta };
+            renderDays();
+            updateTripHeader();
+            updateBudgetSummaryDisplays();
+        }
+
         function subscribeToCloud() {
             if (!cloudReady || cloudLoading) return;
-            cloudDB.collection('cuadernos').doc('cantabria').onSnapshot((snap) => {
+            cloudDB.collection('cuadernos').doc('cantabria').onSnapshot(async (snap) => {
                 if (!snap.exists || !snap.data().days) return;
-                const data = snap.data();
-                // Evitamos pisar cambios locales mientras el usuario está editando.
                 if (window.__cloudWriteInProgress) return;
-                tripData = restoreCoverReferences(data.days || []);
-                if (data.meta) tripMeta = { ...tripMeta, ...data.meta };
-                renderDays();
-                updateTripHeader();
-                updateBudgetSummaryDisplays();
-                console.log('Cuaderno actualizado desde Firebase');
+                try {
+                    await applyCloudSnapshot(snap);
+                    console.log('Cuaderno actualizado desde Firebase');
+                } catch (e) {
+                    console.warn('No se pudo aplicar la actualización de Firebase:', e);
+                }
             }, (e) => console.warn('Suscripción Firebase no disponible:', e));
         }
 
